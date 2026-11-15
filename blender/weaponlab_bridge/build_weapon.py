@@ -661,7 +661,7 @@ def build(input_dir, output, previous=None):
 
     # The add-on finds the sandbox beside the .blend (sandbox/blender/<weapon>.blend), so sandboxes can move;
     # "sandbox" is where it was built, for a .blend saved somewhere else.
-    scene["weaponlab"] = json.dumps({
+    scene["weaponlab_meta"] = json.dumps({
         "schema": BLEND_SCHEMA,
         "weaponId": weapon_id,
         "sandbox": str(input_dir.resolve().parent.parent),

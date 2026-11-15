@@ -42,8 +42,12 @@ RESULT_PREFIX = "WEAPONLAB_RESULT "
 # ---- Scene data ----
 
 def meta(scene):
-    raw = scene.get("weaponlab")
-    return json.loads(raw) if raw else None
+    # "weaponlab" is also the registered PointerProperty for panel settings.
+    # Keep serialized project metadata under its own ID-property key.
+    raw = scene.get("weaponlab_meta")
+    if raw is None:  # Older .blend files used the colliding key.
+        raw = scene.get("weaponlab")
+    return json.loads(raw) if isinstance(raw, str) and raw else None
 
 
 _blend_folders = {}

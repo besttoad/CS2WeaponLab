@@ -439,7 +439,9 @@ public sealed partial class MainWindow
 
     private async void OnSettingsClicked(object? sender, RoutedEventArgs e)
     {
-        if (await SettingsDialog.ShowAsync(this, _sandboxes.WorkspacePath))
+        var workspaceChanged = await SettingsDialog.ShowAsync(this, _sandboxes.WorkspacePath);
+        await LocateBlenderAsync(); // A newly selected Blender takes effect immediately for Build, Open and add-on actions.
+        if (workspaceChanged)
         {
             await Dialogs.ShowAsync(this, "Settings", "The new workspace folder is used when Weapon Lab starts again. Nothing was moved: copy your old workspace there first if you want your profiles along.");
         }

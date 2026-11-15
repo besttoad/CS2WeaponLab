@@ -26,6 +26,9 @@ public sealed class AppSettings
     /// <summary>Where new .blend files are suggested: <c>&lt;folder&gt;\&lt;profile&gt;\&lt;weapon&gt;.blend</c>; null = in the weapon's sandbox (blender\).</summary>
     public string? BlendFolder { get; set; }
 
+    /// <summary>The Blender executable selected in Settings; null = detect the newest installed Blender 4.4 or newer.</summary>
+    public string? BlenderExecutablePath { get; set; }
+
     /// <summary>The settings file; <c>WEAPONLAB_SETTINGS</c> points elsewhere (tests).</summary>
     public static string FilePath =>
         Environment.GetEnvironmentVariable("WEAPONLAB_SETTINGS") is { Length: > 0 } custom

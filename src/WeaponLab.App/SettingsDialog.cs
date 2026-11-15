@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using WeaponLab.Core.Blender;
 using WeaponLab.Core.Sandbox;
 using WeaponLab.Core.Settings;
 
@@ -42,19 +43,49 @@ public static class SettingsDialog
         blendBrowse.Click += async (_, _) => blendFolder.Text = await PickFolderAsync(owner, "Folder for new .blend files", blendFolder.Text) ?? blendFolder.Text;
         blendClear.Click += (_, _) => blendFolder.Text = "";
 
+        var blenderExecutable = new TextBox
+        {
+            Text = settings.BlenderExecutablePath ?? "",
+            MinWidth = 420,
+            PlaceholderText = "Automatic detection (newest Blender 4.4+)",
+        };
+        var blenderBrowse = new Button { Content = "Browse…" };
+        var blenderDefault = new Button { Content = "Auto-detect" };
+        blenderBrowse.Click += async (_, _) => blenderExecutable.Text = await PickBlenderAsync(owner) ?? blenderExecutable.Text;
+        blenderDefault.Click += (_, _) => blenderExecutable.Text = "";
+
         var error = new TextBlock { Foreground = Brushes.IndianRed, TextWrapping = TextWrapping.Wrap, MaxWidth = 560, IsVisible = false };
         var save = new Button { Content = "Save", IsDefault = true, MinWidth = 90, HorizontalContentAlignment = HorizontalAlignment.Center };
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 90, HorizontalContentAlignment = HorizontalAlignment.Center };
         cancel.Click += (_, _) => dialog.Close();
-        save.Click += (_, _) =>
+        save.Click += async (_, _) =>
         {
             var chosenWorkspace = (workspace.Text ?? "").Trim().Trim('"');
             var chosenBlend = (blendFolder.Text ?? "").Trim().Trim('"');
+            var chosenBlender = (blenderExecutable.Text ?? "").Trim().Trim('"');
             if (!Path.IsPathFullyQualified(chosenWorkspace) || (chosenBlend.Length > 0 && !Path.IsPathFullyQualified(chosenBlend)))
             {
                 error.Text = "Use full folder paths, e.g. D:\\WeaponLab\\workspace.";
                 error.IsVisible = true;
                 return;
+            }
+
+            if (chosenBlender.Length > 0)
+            {
+                if (!Path.IsPathFullyQualified(chosenBlender) || !File.Exists(chosenBlender))
+                {
+                    error.Text = "Choose the full path to an installed Blender executable (blender.exe), or use Auto-detect.";
+                    error.IsVisible = true;
+                    return;
+                }
+
+                var install = await Task.Run(() => BlenderLocator.Probe(Path.GetFullPath(chosenBlender)));
+                if (install is null || install.Version < BlenderLocator.Minimum)
+                {
+                    error.Text = $"That file did not identify itself as Blender {BlenderLocator.Minimum} or newer.";
+                    error.IsVisible = true;
+                    return;
+                }
             }
 
             try
@@ -63,6 +94,7 @@ public static class SettingsDialog
                 changedWorkspace = !string.Equals(full.TrimEnd('\\'), Path.GetFullPath(workspaceInUse).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
                 settings.WorkspaceFolder = full;
                 settings.BlendFolder = chosenBlend.Length == 0 ? null : Path.GetFullPath(chosenBlend);
+                settings.BlenderExecutablePath = chosenBlender.Length == 0 ? null : Path.GetFullPath(chosenBlender);
                 settings.Save();
                 dialog.Close();
             }
@@ -91,6 +123,9 @@ public static class SettingsDialog
                 Row(blendFolder, blendBrowse, blendClear),
                 Note("Build .blend suggests <folder>\\<profile>\\<weapon>.blend for a weapon that has no .blend yet. Existing .blend files stay where they are; "
                     + "Move .blend… (right-click a weapon, or the Animations tab) moves one."),
+                Header("Blender executable"),
+                Row(blenderExecutable, blenderBrowse, blenderDefault),
+                Note("Choose the blender.exe Weapon Lab uses to build .blend files, open them, and manage the add-on. Leave blank to detect the newest installed Blender 4.4 or newer."),
                 Note("Settings file: " + AppSettings.FilePath),
                 error,
                 new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0), Children = { cancel, save } },
@@ -106,6 +141,19 @@ public static class SettingsDialog
         var picked = await owner.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = title, AllowMultiple = false, SuggestedStartLocation = start });
         return picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
     }
+
+    private static async Task<string?> PickBlenderAsync(Window owner)
+    {
+        var picked = await owner.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Choose Blender executable",
+            AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("Blender executable") { Patterns = ["blender.exe"] }],
+        });
+        return picked.Count > 0 ? picked[0].TryGetLocalPath() : null;
+    }
+
+
 
     private static TextBlock Header(string text) => new() { Text = text, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 6, 0, 0) };
 

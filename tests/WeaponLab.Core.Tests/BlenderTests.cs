@@ -21,6 +21,7 @@ public sealed class BlenderTests : IDisposable
     [Theory]
     [InlineData("Blender 5.2.3 LTS\r\n\tbuild date: 2026-10-22\r\n", "5.2.3", "5.2.3 LTS")]
     [InlineData("Blender 4.4.0\n", "4.4.0", "4.4.0")]
+    [InlineData("Blender 4.5.0\n", "4.5.0", "4.5.0")]
     [InlineData("Blender 3.6.5\n", "3.6.5", "3.6.5")]
     public void VersionIsParsedFromBlenderOutput(string output, string version, string text)
     {
@@ -35,6 +36,14 @@ public sealed class BlenderTests : IDisposable
     public void NonBlenderOutputIsRejected()
     {
         Assert.Null(BlenderLocator.ParseVersion("other.exe", "Usage: other [options]"));
+    }
+
+    [Fact]
+    public void UserSelectedBlenderIsTheFirstCandidate()
+    {
+        const string selected = @"C:\Blender 4.4\blender.exe";
+
+        Assert.Equal(selected, BlenderLocator.Candidates(selected).First());
     }
 
     [Theory]

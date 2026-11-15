@@ -242,7 +242,7 @@ public sealed partial class MainWindow : Window
 
     private async Task LocateBlenderAsync()
     {
-        _blender = await Task.Run(BlenderLocator.Locate);
+        _blender = await Task.Run(() => BlenderLocator.Locate(WeaponLab.Core.Settings.AppSettings.Load().BlenderExecutablePath));
         if (_blender is null)
         {
             BlenderText.Text = "Blender not found";

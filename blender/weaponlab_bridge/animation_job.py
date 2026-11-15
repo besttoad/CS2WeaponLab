@@ -31,7 +31,12 @@ def main():
         raise RuntimeError("Usage: ... --python animation_job.py -- <mode> <input folder> <clip> <file> [<sample out>]")
     mode, input_dir, clip, file = arguments[0], Path(arguments[1]), arguments[2], Path(arguments[3])
     scene = bpy.context.scene
-    meta = json.loads(scene["weaponlab"])
+    raw_meta = scene.get("weaponlab_meta")
+    if raw_meta is None:
+        raw_meta = scene.get("weaponlab")
+    if not isinstance(raw_meta, str) or not raw_meta:
+        raise RuntimeError("The .blend has no Weapon Lab project metadata. Build it again from Weapon Lab.")
+    meta = json.loads(raw_meta)
     action = bpy.data.actions[meta["actions"][clip]]
     # A third-person clip (0.26) plays on the Body rig and its own weapon rig.
     arms, weapon = pose_io.scene_rigs(scene, meta, pose_io.is_world(action))
