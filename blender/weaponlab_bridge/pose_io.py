@@ -178,6 +178,80 @@ def clear_bones(bag, names):
         bag.fcurves.remove(curve)
 
 
+
+def _keyframe_point(curve, frame):
+    """The key on an F-curve at an integer scene frame, or None."""
+    return next((point for point in curve.keyframe_points if abs(point.co.x - frame) < 1e-4), None)
+
+
+def _bone_channel_curves(bag, bone_name):
+    """Location, quaternion rotation and scale curves for one pose bone."""
+    prefix = 'pose.bones[' + json.dumps(bone_name) + '].'
+    result = {}
+    for prop, width in (("location", 3), ("rotation_quaternion", 4), ("scale", 3)):
+        curves = [bag.fcurves.find(prefix + prop, index=index) for index in range(width)]
+        result[prop] = curves if all(curves) else None
+    return result
+
+
+def propagate_bone_delta(bag, bone_name, frame, previous, current):
+    """Apply one pose-bone transform delta to its immediately following keyed pose.
+
+    Location uses an offset, rotation uses a quaternion delta, and scale uses a
+    ratio (with an additive fallback when the old scale is zero). Only channels
+    changed at the current frame are touched; no other keyframe is modified.
+    """
+    channels = _bone_channel_curves(bag, bone_name)
+    all_curves = [curve for curves in channels.values() if curves for curve in curves]
+    frames = sorted({float(point.co.x) for curve in all_curves for point in curve.keyframe_points
+                     if point.co.x > frame + 1e-4})
+    if not frames:
+        return None
+    next_frame = frames[0]
+    changed = False
+
+    for prop in ("location", "rotation_quaternion", "scale"):
+        old_values = previous[prop]
+        new_values = current[prop]
+        if len(old_values) != len(new_values) or all(abs(a - b) < 1e-6 for a, b in zip(old_values, new_values)):
+            continue
+        curves = channels[prop]
+        if curves is None:
+            continue
+        current_points = [_keyframe_point(curve, frame) for curve in curves]
+        next_points = [_keyframe_point(curve, next_frame) for curve in curves]
+        if not all(current_points) or not all(next_points):
+            continue
+        target = [point.co.y for point in next_points]
+
+        if prop == "location":
+            result = [value + (new - old) for value, old, new in zip(target, old_values, new_values)]
+        elif prop == "rotation_quaternion":
+            old_q = Quaternion(old_values)
+            new_q = Quaternion(new_values)
+            if old_q.dot(new_q) < 0:
+                new_q.negate()
+            delta = new_q @ old_q.inverted()
+            target_q = Quaternion(target)
+            result_q = delta @ target_q
+            result_q.normalize()
+            if result_q.dot(target_q) < 0:
+                result_q.negate()
+            result = list(result_q)
+        else:
+            result = []
+            for value, old, new in zip(target, old_values, new_values):
+                result.append(value * (new / old) if abs(old) > 1e-8 else value + (new - old))
+
+        for point, value in zip(next_points, result):
+            point.co.y = value
+        for curve in curves:
+            curve.update()
+        changed = True
+
+    return next_frame if changed else None
+
+
 def new_curve(bag, data_path, index, group_name):
     """Creates an F-curve in a named group using the Blender 4.4+ channelbag API."""
     curve = bag.fcurves.new(data_path, index=index)
