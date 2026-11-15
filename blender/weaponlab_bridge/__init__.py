@@ -311,11 +311,106 @@ def set_export_as(settings, value):
         action["weaponlab_export_as"] = clips[value]
 
 
+
+# ---- Local pose propagation (experimental prototype) ----
+
+_pose_propagation_timer_running = False
+_pose_propagation_busy = False
+_pose_propagation_snapshots = {}
+
+
+def _pose_transform_snapshot(rig):
+    """Current editable pose-bone channels, in the same quaternion convention as the Action."""
+    return {
+        bone.name: {
+            "location": tuple(bone.location),
+            "rotation_quaternion": tuple(bone.rotation_quaternion),
+            "scale": tuple(bone.scale),
+        }
+        for bone in rig.pose.bones
+    }
+
+
+def _pose_propagation_tick():
+    """Watch the active Weapon Lab rig and propagate changed channels to the next keyed pose."""
+    global _pose_propagation_busy
+    try:
+        scene = bpy.context.scene
+        settings = getattr(scene, "weaponlab", None)
+        if (settings is None or not settings.use_pose_propagation
+                or not scene.tool_settings.use_keyframe_insert_auto
+                or bpy.context.mode != "POSE"):
+            _pose_propagation_snapshots.clear()
+            return 0.12
+
+        rig = bpy.context.view_layer.objects.active
+        if rig is None or rig.type != "ARMATURE" or rig not in bpy.context.selected_objects:
+            _pose_propagation_snapshots.clear()
+            return 0.12
+        clip_id = current_clip(scene)
+        action = clip_action(scene, clip_id) if clip_id else None
+        if action is None or rig.animation_data is None or rig.animation_data.action != action:
+            _pose_propagation_snapshots.clear()
+            return 0.12
+
+        slot = rig.animation_data.action_slot
+        if slot is None:
+            _pose_propagation_snapshots.clear()
+            return 0.12
+        bag = action.layers[0].strips[0].channelbag(slot) if action.layers else None
+        if bag is None:
+            _pose_propagation_snapshots.clear()
+            return 0.12
+
+        frame = int(round(scene.frame_current))
+        key = (scene.as_pointer(), rig.as_pointer(), action.as_pointer(), slot.identifier, frame)
+        current = _pose_transform_snapshot(rig)
+        previous = _pose_propagation_snapshots.get(key)
+        _pose_propagation_snapshots[key] = current
+
+        if previous is not None and not _pose_propagation_busy:
+            _pose_propagation_busy = True
+            try:
+                for bone_name, values in current.items():
+                    old_values = previous.get(bone_name)
+                    if old_values is None:
+                        continue
+                    pose_io.propagate_bone_delta(bag, bone_name, frame, old_values, values)
+            finally:
+                _pose_propagation_busy = False
+        # Keep only the latest baseline for this active editing context.
+        for old_key in list(_pose_propagation_snapshots):
+            if old_key != key:
+                _pose_propagation_snapshots.pop(old_key, None)
+    except (ReferenceError, RuntimeError, AttributeError, KeyError, IndexError, ValueError):
+        _pose_propagation_snapshots.clear()
+    return 0.12
+
+
+def _start_pose_propagation_timer():
+    global _pose_propagation_timer_running
+    if not bpy.app.timers.is_registered(_pose_propagation_tick):
+        bpy.app.timers.register(_pose_propagation_tick, first_interval=0.12, persistent=True)
+    _pose_propagation_timer_running = True
+
+
+def _stop_pose_propagation_timer():
+    global _pose_propagation_timer_running
+    if bpy.app.timers.is_registered(_pose_propagation_tick):
+        bpy.app.timers.unregister(_pose_propagation_tick)
+    _pose_propagation_timer_running = False
+    _pose_propagation_snapshots.clear()
+
+
 class WeaponLabSettings(PropertyGroup):
     clip: EnumProperty(name="Clip used", description="The clip you animate here; switches both rigs", items=clip_items, update=on_clip_changed)
     export_as: EnumProperty(name="Exported as", items=export_items, get=get_export_as, set=set_export_as,
                             description="The clip this animation exports into (default: itself). Pick another to overwrite it, e.g. a legacy clip you do not need; saved in the .blend")
     last_result: StringProperty(name="Last export", default="")
+    use_pose_propagation: BoolProperty(
+        name="Propagate to next keyframe",
+        description="Apply this pose edit to the immediately following keyed pose for the affected bones and channels",
+        default=False)
 
 
 # ---- Bone presets (from CS2 Animation Lab) ----
@@ -1169,6 +1264,7 @@ class WEAPONLAB_PT_main(Panel):
         row.operator("weaponlab.edit_rig", text="Edit Body" if world else "Edit Arms", icon="ARMATURE_DATA").rig = "ARMS"
         row.operator("weaponlab.edit_rig", text="Edit Weapon", icon="TOOL_SETTINGS").rig = "WEAPON"
         box.label(text="Weapon hands follow the hands (always)", icon="LINKED")
+        box.prop(context.scene.weaponlab, "use_pose_propagation", text="Propagate to next keyframe")
         # CS2AL's "red dot": Blender's own auto-key switch, shown as a big toggle.
         row = box.row()
         row.scale_y = 1.3
@@ -1475,6 +1571,7 @@ def register():
     for cls in CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.Scene.weaponlab = PointerProperty(type=WeaponLabSettings)
+    _start_pose_propagation_timer()
     bpy.app.handlers.load_post.append(on_load)
     _hint_handler = bpy.types.SpaceView3D.draw_handler_add(draw_sidebar_hint, (), "WINDOW", "POST_PIXEL")
     _timing_handler = bpy.types.SpaceDopeSheetEditor.draw_handler_add(draw_timing_lines, (), "WINDOW", "POST_PIXEL")
@@ -1487,6 +1584,7 @@ def unregister():
     global _hint_handler, _timing_handler, _graph_timing_handler
     if bpy.app.timers.is_registered(follow_clip_lengths):
         bpy.app.timers.unregister(follow_clip_lengths)
+    _stop_pose_propagation_timer()
     if _hint_handler is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_hint_handler, "WINDOW")
         _hint_handler = None
