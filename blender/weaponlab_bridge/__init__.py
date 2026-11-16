@@ -8,6 +8,7 @@ which verifies every clip it writes.
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import blf
@@ -332,7 +333,7 @@ def _pose_transform_snapshot(rig):
 
 
 def _pose_propagation_tick():
-    """Watch the active Weapon Lab rig and propagate changed channels to the next keyed pose."""
+    """Debounce pose edits, then propagate once after the user stops manipulating."""
     global _pose_propagation_busy
     try:
         scene = bpy.context.scene
@@ -365,20 +366,55 @@ def _pose_propagation_tick():
         frame = int(round(scene.frame_current))
         key = (scene.as_pointer(), rig.as_pointer(), action.as_pointer(), slot.identifier, frame)
         current = _pose_transform_snapshot(rig)
-        previous = _pose_propagation_snapshots.get(key)
-        _pose_propagation_snapshots[key] = current
+        now = time.monotonic()
+        state = _pose_propagation_snapshots.get(key)
 
-        if previous is not None and not _pose_propagation_busy:
+        # A new frame/context establishes its own baseline. Never carry an edit
+        # from one frame into another as the starting point for the next edit.
+        if state is None:
+            _pose_propagation_snapshots.clear()
+            _pose_propagation_snapshots[key] = {
+                "baseline": current,
+                "pending": None,
+                "changed_at": None,
+            }
+            return 0.12
+
+        baseline = state["baseline"]
+        if current != baseline:
+            # Keep the original baseline while the user is dragging. Repeated
+            # timer samples only refresh the pending pose and debounce clock.
+            state["pending"] = current
+            state["changed_at"] = now
+        elif state["pending"] is not None:
+            # The pose has returned to its baseline (e.g. an undo or cancel).
+            state["pending"] = None
+            state["changed_at"] = None
+
+        quiet_seconds = 0.45
+        if (state["pending"] is not None and state["changed_at"] is not None
+                and now - state["changed_at"] >= quiet_seconds
+                and not _pose_propagation_busy):
+            final_pose = state["pending"]
             _pose_propagation_busy = True
             try:
-                for bone_name, values in current.items():
-                    old_values = previous.get(bone_name)
+                for bone_name, values in final_pose.items():
+                    old_values = baseline.get(bone_name)
                     if old_values is None:
                         continue
-                    pose_io.propagate_bone_delta(bag, bone_name, frame, old_values, values)
+                    pose_io.propagate_bone_delta(
+                        bag, bone_name, frame, old_values, values
+                    )
             finally:
                 _pose_propagation_busy = False
-        # Keep only the latest baseline for this active editing context.
+
+            # Commit the final edited pose as the new baseline. This prevents
+            # the watcher from re-applying the same delta on later ticks.
+            state["baseline"] = final_pose
+            state["pending"] = None
+            state["changed_at"] = None
+
+        # Keep only the active editing context. Frame changes start cleanly.
         for old_key in list(_pose_propagation_snapshots):
             if old_key != key:
                 _pose_propagation_snapshots.pop(old_key, None)
