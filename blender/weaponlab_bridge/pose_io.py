@@ -194,6 +194,27 @@ def _bone_channel_curves(bag, bone_name):
     return result
 
 
+
+def keyed_pose_snapshot(bag, frame, bone_names):
+    """Read the exact keyed transform values at a frame, not evaluated pose values."""
+    snapshot = {}
+    for bone_name in bone_names:
+        channels = _bone_channel_curves(bag, bone_name)
+        values = {}
+        complete = True
+        for prop, curves in channels.items():
+            if curves is None:
+                complete = False
+                break
+            points = [_keyframe_point(curve, frame) for curve in curves]
+            if not all(points):
+                complete = False
+                break
+            values[prop] = tuple(point.co.y for point in points)
+        if complete:
+            snapshot[bone_name] = values
+    return snapshot
+
 def propagate_bone_delta(bag, bone_name, frame, previous, current):
     """Apply one pose-bone transform delta to its immediately following keyed pose.
 
