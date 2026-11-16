@@ -365,7 +365,9 @@ def _pose_propagation_tick():
 
         frame = int(round(scene.frame_current))
         key = (scene.as_pointer(), rig.as_pointer(), action.as_pointer(), slot.identifier, frame)
-        current = _pose_transform_snapshot(rig)
+        # Read the actual keyed values. Evaluated pose channels can include
+        # interpolation and constraints, which are not the delta stored in this Action.
+        current = pose_io.keyed_pose_snapshot(bag, frame, [bone.name for bone in rig.pose.bones])
         now = time.monotonic()
         state = _pose_propagation_snapshots.get(key)
 
@@ -382,12 +384,13 @@ def _pose_propagation_tick():
 
         baseline = state["baseline"]
         if current != baseline:
-            # Keep the original baseline while the user is dragging. Repeated
-            # timer samples only refresh the pending pose and debounce clock.
-            state["pending"] = current
-            state["changed_at"] = now
+            # Only restart the debounce when the keyed values themselves change.
+            # Once Auto Key stops updating them, the pending pose can settle.
+            if current != state["pending"]:
+                state["pending"] = current
+                state["changed_at"] = now
         elif state["pending"] is not None:
-            # The pose has returned to its baseline (e.g. an undo or cancel).
+            # The keyed values returned to the original values (e.g. undo/cancel).
             state["pending"] = None
             state["changed_at"] = None
 
